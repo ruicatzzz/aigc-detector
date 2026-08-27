@@ -1,44 +1,42 @@
 """
-Owned by Person B.
+Model definition / loading helper.
 
-CONTRACT (do not change the signatures below — infer.py, evaluate.py, and
-gradcam.py are all written against this interface):
-
-    load_model(checkpoint_path: str | None) -> model
-    model.predict(image: PIL.Image.Image) -> float   # in [0, 1], P(AIGC)
-
-Until a real checkpoint exists, DummyModel below lets everyone else's code
-run end-to-end today. Person B: replace DummyModel's internals (or add a
-new class) but keep load_model()'s return object exposing .predict().
+Keeps backbone choice in one place so train.py, evaluate.py, infer.py, and
+gradcam.py all build the identical architecture and never drift out of sync.
 """
 
-import hashlib
-import random
+import torch
+import timm
 
-from PIL import Image
-
-
-class DummyModel:
-    """Placeholder that returns a deterministic pseudo-random score per
-    image so demos/tests are reproducible before a real model exists."""
-
-    def predict(self, image: Image.Image) -> float:
-        # Hash image bytes for a stable-but-fake confidence score.
-        digest = hashlib.md5(image.tobytes()[:4096]).hexdigest()
-        rng = random.Random(digest)
-        return round(rng.uniform(0.0, 1.0), 4)
+# Any backbone here must stay under the hackathon's <2B parameter limit.
+# resnet50 (~25M params) and efficientnet_b0 (~5M params) are safe defaults.
+DEFAULT_BACKBONE = "resnet50"
+NUM_CLASSES = 2  # 0 = REAL, 1 = FAKE
 
 
-def load_model(checkpoint_path: str | None = None):
-    """
-    Person B: replace this to actually load a trained checkpoint
-    (e.g. CLIP/DINOv2 backbone + classification head) and return an
-    object with a .predict(PIL.Image) -> float method.
-    """
-    if checkpoint_path is None:
-        return DummyModel()
-    # TODO(Person B): real checkpoint loading goes here.
-    raise NotImplementedError(
-        f"No real model loader yet — checkpoint_path={checkpoint_path} "
-        "was passed but load_model() only supports the dummy model so far."
-    )
+def build_model(backbone: str = DEFAULT_BACKBONE, pretrained: bool = True,
+                 num_classes: int = NUM_CLASSES):
+    model = timm.create_model(backbone, pretrained=pretrained, num_classes=num_classes)
+    return model
+
+
+def load_checkpoint(checkpoint_path: str, backbone: str = DEFAULT_BACKBONE,
+                     device: str = "cpu"):
+    model = build_model(backbone=backbone, pretrained=False)
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.to(device)
+    model.eval()
+    return model
+
+
+def count_parameters(model) -> int:
+    return sum(p.numel() for p in model.parameters())
+
+
+if __name__ == "__main__":
+    m = build_model()
+    n_params = count_parameters(m)
+    print(f"Backbone: {DEFAULT_BACKBONE}")
+    print(f"Total parameters: {n_params:,} ({n_params / 1e6:.1f}M)")
+    assert n_params < 2_000_000_000, "Model exceeds the 2B parameter hackathon limit!"
