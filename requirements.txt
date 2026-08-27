@@ -1,0 +1,24 @@
+# Core
+torch>=2.1
+torchvision>=0.16
+numpy
+pillow
+tqdm
+
+# Model backbones (Person B)
+open-clip-torch
+timm
+
+# Augmentations / image ops (Person A)
+opencv-python
+scikit-image
+albumentations
+
+# Eval / explainability (Person C)
+scikit-learn
+grad-cam
+matplotlib
+pandas
+
+# Infra / misc (Person D)
+pyyaml
