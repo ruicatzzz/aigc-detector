@@ -40,12 +40,21 @@ def _center_crop_80(img):
     left, top = (w - new_w) // 2, (h - new_h) // 2
     return img.crop((left, top, left + new_w, top + new_h)).resize((w, h))
 
+BLUR_SIGMAS = [0.5, 1.0, 2.0]
+BLUR_WEIGHTS = [0.2, 0.3, 0.5]
+
+RESIZE_SCALES = [0.5, 0.25]
+RESIZE_WEIGHTS = [0.4, 0.6]
+
+NOISE_SIGMAS = [0.02, 0.05, 0.10]
+JPEG_QUALITIES = [30, 50, 70, 90]
+
 
 AUGMENTATIONS = [
-    lambda img: _jpeg(img, random.choice([30, 50, 70, 90])),
-    lambda img: _blur(img, random.choice([0.5, 1.0, 2.0])),
-    lambda img: _resize_down_up(img, random.choice([0.5, 0.25])),
-    lambda img: _noise(img, random.choice([0.02, 0.05, 0.10])),
+    lambda img: _jpeg(img, random.choice(JPEG_QUALITIES)),
+    lambda img: _blur(img, random.choices(BLUR_SIGMAS, weights=BLUR_WEIGHTS, k=1)[0]),
+    lambda img: _resize_down_up(img, random.choices(RESIZE_SCALES, weights=RESIZE_WEIGHTS, k=1)[0]),
+    lambda img: _noise(img, random.choice(NOISE_SIGMAS)),
     lambda img: _color_jitter(img),
     lambda img: _center_crop_80(img),
 ]
