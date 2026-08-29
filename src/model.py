@@ -15,7 +15,10 @@ new class) but keep load_model()'s return object exposing .predict().
 import hashlib
 import random
 
+import torch
+import torch.nn as nn
 from PIL import Image
+from torchvision import transforms
 
 
 class DummyModel:
@@ -28,6 +31,46 @@ class DummyModel:
         rng = random.Random(digest)
         return round(rng.uniform(0.0, 1.0), 4)
 
+class SmallCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1), nn.BatchNorm2d(32),  n.ReLU(),
+            nn.Conv2d(32, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2s(32, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),
+            nn.Conv2d(64, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.classifier = nn.Linear(128, 1)
+
+    def forward(self, x):
+        x = self.features(x)
+        x - torch.flatten(x, 1)
+        return self.classifier(x)
+
+IMAGE_SIZE = 32
+_TRANSFORM = transforms.Compose([
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+class RealModel:
+    def __init__(self, checkpoint_path: str):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.net = SmallCNN().to(self.device)
+        state_dict = torch.load(checkpoint_path, map_location=self.device)
+        self.net.load_state_dict(state_dict)
+        self.net.eval()
+    @torch.no_grad()
+    def predict(self, image: Image.Image) -> float:
+        x = _TRANSFORM(image).unsqueeze(0).to(self.device)
+        logit = self.net(x)
+        prob = torch.sigmoid(logit).item()
+        return round(prob, 4)
 
 def load_model(checkpoint_path: str | None = None):
     """
@@ -37,8 +80,4 @@ def load_model(checkpoint_path: str | None = None):
     """
     if checkpoint_path is None:
         return DummyModel()
-    # TODO(Person B): real checkpoint loading goes here.
-    raise NotImplementedError(
-        f"No real model loader yet — checkpoint_path={checkpoint_path} "
-        "was passed but load_model() only supports the dummy model so far."
-    )
+    return RealModel(checkpoint_path)
