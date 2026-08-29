@@ -47,6 +47,8 @@ python gradcam.py --checkpoint ../checkpoints/resnet50_augmented.pt \
                    --predictions ../outputs/augmented_results_predictions.json \
                    --condition clean --num_examples 3
 ```
+# ALTERNATIVELY: Google Colab (make a copy of this yourself)
+https://colab.research.google.com/drive/1XmjC7DvNEETqJwUwXp_DTxhzEF-NbxvX?usp=sharing
 
 ## Results: Baseline vs. Augmented
 
@@ -118,3 +120,4 @@ _Fill in after reviewing the images:_
    move final results into the main `README.md` results table.
 4. Fill in the error analysis interpretation above once images are
    reviewed.
+
