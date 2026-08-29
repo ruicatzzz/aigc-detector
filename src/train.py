@@ -60,6 +60,7 @@ def train(data_dir: str, epochs: int, batch_size: int, lr: float, weight_decay: 
     train_loader, val_loader, class_to_idx = get_dataloaders(data_dir, batch_size)
     model = SmallCNN().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = nn.BCEWithLogitsLoss()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
