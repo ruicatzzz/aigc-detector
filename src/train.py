@@ -1,24 +1,39 @@
 import argparse
+import random
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
-from torchvision import datasets
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms
 from tqdm import tqdm
 
 from src.model import SmallCNN, _TRANSFORM
+from src.augment_transform import RandomRobustnessAugment
 
-def get_dataloaders(data_dir: str, batch_size: int, val_split: float = 0.1):
-    dataset = datasets.ImageFolder(data_dir, transform = _TRANSFORM)
-    print(f"Classes found: {dataset.class_to_idx}  "
-          f"(expect something like FAKE=0, REAL=1 — see docstring)")
-    n_val = int(len(dataset) * val_split)
-    n_train = len(dataset) - n_val
-    train_ds, val_ds = random_split(dataset, [n_train, n_val])
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2)
-    return train_loader, val_loader, dataset.class_to_idx
+_AUGMENTED_TRANSFORM = transforms.Compose([
+    RandomRobustnessAugment(p=0.7),
+    _TRANSFORM,
+])
+
+def get_dataloaders(data_dir: str, batch_size: int, val_split: float = 0.1, seed: int = 42):
+    base_info = datasets.ImageFolder(data_dir)
+    dataset = datasets.ImageFolder(data_dir)
+    class_to_idx = base_info.class_to_idx
+    print(f"Classes found: {class_to_idx}  (expect FAKE and REAL keys)")
+    n_total = len(base_info)
+    indices = list(range(n_total))
+    random.Random(seed).shuffle(indices)
+    n_val = int(n_total * val_split)
+    val_indices = indices[:n_val]
+    train_indices = indices[n_val:]
+    train_dataset = datasets.ImageFolder(data_dir, transform=_AUGMENTED_TRANSFORM)
+    val_dataset = datasets.ImageFolder(data_dir, transform=_TRANSFORM)
+    train_subset = Subset(train_dataset, train_indices)
+    val_subset = Subset(val_dataset, val_indices)
+    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=2)
+    return train_loader, val_loader, class_to_idx
 
 def remap_labels(labels: torch.Tensor, class_to_idx: dict) -> torch.Tensor:
     fake_idx = class_to_idx.get("FAKE", class_to_idx.get("fake"))
@@ -39,13 +54,16 @@ def evaluate(model, loader, class_to_idx, device):
             total += labels.size(0)
     return correct / total if total else 0.0
 
-def train(data_dir: str, epochs: int, batch_size: int, lr: float, out_path: str):
+def train(data_dir: str, epochs: int, batch_size: int, lr: float, weight_decay: float, out_path: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     train_loader, val_loader, class_to_idx = get_dataloaders(data_dir, batch_size)
     model = SmallCNN().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     criterion = nn.BCEWithLogitsLoss()
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    best_val_acc = 0.0
     for epoch in range(1, epochs+1):
         model.train()
         running_loss = 0.0
@@ -58,23 +76,27 @@ def train(data_dir: str, epochs: int, batch_size: int, lr: float, out_path: str)
             loss.backward()
             optimizer.step()
             running_loss += loss.item() * images.size(0)
+        scheduler.step()
         train_loss = running_loss / len(train_loader.dataset)
         val_acc = evaluate(model, val_loader, class_to_idx, device)
-        print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_acc={val_acc:.4f}")
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), out_path)
-    print(f"Saved checkpoint to {out_path}")
+        is_best = val_acc > best_val_acc
+        marker = " <- new best, saving" if is_best else ""
+        print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_acc={val_acc:.4f}{marker}")
+        if is_best:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), out_path)
+    print(f"Training done. Best val_acc={best_val_acc:.4f}, checkpoint saved at {out_path}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train SmallCNN AIGC detector")
     parser.add_argument("--data_dir", required=True, help="ImageFolder-style dir, e.g. data/cifake/train")
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--out", default="checkpoints/cnn_cifake.pt")
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-    train(args.data_dir, args.epochs, args.batch_size, args.lr, args.out)
+    train(args.data_dir, args.epochs, args.batch_size, args.lr, args.weight_decay, args.out)
