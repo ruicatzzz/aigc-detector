@@ -70,11 +70,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train SmallCNN AIGC detector")
     parser.add_argument("--data_dir", required=True, help="ImageFolder-style dir, e.g. data/cifake/train")
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch_sizze", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--out", default="checkpoints/cnn_cifake.pt")
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-    train(args.data_dir, args.epochs, args.batch_sizze, args.lr, args.out)
+    train(args.data_dir, args.epochs, args.batch_size, args.lr, args.out)
