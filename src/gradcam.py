@@ -23,7 +23,7 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 from model import load_checkpoint
 from dataset import default_transform
-
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
 def get_target_layer(model, backbone: str):
     # Works for resnet-family backbones; adjust if you swap architectures.
@@ -75,7 +75,8 @@ def run_gradcam(args):
             rgb_float = np.array(img_resized).astype(np.float32) / 255.0
 
             input_tensor = transform(img).unsqueeze(0).to(device)
-            grayscale_cam = cam(input_tensor=input_tensor)[0]
+            targets = [ClassifierOutputTarget(pred)]
+            grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]  
             overlay = show_cam_on_image(rgb_float, grayscale_cam, use_rgb=True)
 
             out_name = f"{category}_{i}_label{label}_pred{pred}_prob{prob:.2f}.jpg"
