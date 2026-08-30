@@ -20,7 +20,7 @@ import argparse
 import json
 import torch
 from torch.utils.data import DataLoader
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
 from dataset import AIGCDataset, default_transform
 from model import load_checkpoint
@@ -44,18 +44,31 @@ def run_eval(model, dataset, device, batch_size=32, num_workers=2):
     return all_labels, all_preds, all_probs
 
 
-def compute_metrics(labels, preds):
-    return {
+def compute_metrics(labels, preds, probs=None):
+    metrics = {
         "accuracy": accuracy_score(labels, preds),
         "precision": precision_score(labels, preds, zero_division=0),
         "recall": recall_score(labels, preds, zero_division=0),
         "f1": f1_score(labels, preds, zero_division=0),
         "n_samples": len(labels),
     }
+    # AUC needs probability scores (not hard preds) and both classes present
+    if probs is not None:
+        try:
+            metrics["auc"] = roc_auc_score(labels, probs)
+        except ValueError:
+            # happens if a condition's labels are all one class (e.g. tiny subset)
+            metrics["auc"] = float("nan")
+    return metrics
 
 
 def evaluate_all_conditions(args):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"  # Apple Silicon GPU
+    else:
+        device = "cpu"
     model = load_checkpoint(args.checkpoint, backbone=args.backbone, device=device)
     transform = default_transform(args.image_size)
 
@@ -67,13 +80,13 @@ def evaluate_all_conditions(args):
     clean_ds = AIGCDataset(root_dir=args.data_dir, split="test",
                             use_augmentation=False, transform=transform)
     labels, preds, probs = run_eval(model, clean_ds, device, args.batch_size, args.num_workers)
-    metrics = compute_metrics(labels, preds)
+    metrics = compute_metrics(labels, preds, probs)
     metrics["condition"] = "clean"
     results.append(metrics)
     predictions_dump["clean"] = list(zip(
         [p for p, _ in clean_ds.samples], labels, preds, probs
     ))
-    print(f"  acc={metrics['accuracy']:.4f} f1={metrics['f1']:.4f} (n={metrics['n_samples']})")
+    print(f"  acc={metrics['accuracy']:.4f} f1={metrics['f1']:.4f} auc={metrics['auc']:.4f} (n={metrics['n_samples']})")
 
     # --- 2. Each transform condition ---
     if os.path.isdir(args.transformed_dir):
@@ -90,13 +103,13 @@ def evaluate_all_conditions(args):
                 continue
 
             labels, preds, probs = run_eval(model, t_ds, device, args.batch_size, args.num_workers)
-            metrics = compute_metrics(labels, preds)
+            metrics = compute_metrics(labels, preds, probs)
             metrics["condition"] = t_name
             results.append(metrics)
             predictions_dump[t_name] = list(zip(
                 [p for p, _ in t_ds.samples], labels, preds, probs
             ))
-            print(f"  acc={metrics['accuracy']:.4f} f1={metrics['f1']:.4f} (n={metrics['n_samples']})")
+            print(f"  acc={metrics['accuracy']:.4f} f1={metrics['f1']:.4f} auc={metrics['auc']:.4f} (n={metrics['n_samples']})")
     else:
         print(f"WARNING: transformed_dir {args.transformed_dir} not found — "
               f"run build_test_transforms.py first. Reporting clean-only results.")
@@ -116,7 +129,7 @@ def evaluate_all_conditions(args):
 
 
 def write_csv(results, out_path):
-    fieldnames = ["condition", "accuracy", "precision", "recall", "f1", "n_samples"]
+    fieldnames = ["condition", "accuracy", "auc", "precision", "recall", "f1", "n_samples"]
     lines = [",".join(fieldnames)]
     for r in results:
         lines.append(",".join(str(r[k]) for k in fieldnames))
