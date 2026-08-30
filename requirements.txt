@@ -4,6 +4,7 @@ torchvision>=0.16
 numpy
 pillow
 tqdm
+datasets
 
 # Model backbones (Person B)
 open-clip-torch
