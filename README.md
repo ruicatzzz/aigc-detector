@@ -5,9 +5,59 @@ post-processing transformations (JPEG compression, blur, resize, noise,
 color jitter, center crop).
 
 ## Project Overview
-<!-- Person D, Day 3: 2-3 sentences — what the solution does, the core
-technical approach (backbone + robustness training), and the headline
-robustness result once you have it. -->
+
+This project trains a lightweight CNN (`SmallCNN`) to classify images as
+real or AI-generated, with a focus on robustness under realistic
+post-processing rather than just clean-image accuracy. The core approach:
+train-time augmentation using the same transform family the model is
+evaluated against, so the network learns features that survive
+compression, blurring, downsampling, and cropping rather than relying on
+brittle high-frequency artifacts that vanish under light processing.
+
+The model is trained on a combination of CIFAKE (32x32 real/synthetic
+image pairs) and a streamed subset of SID_Set (higher-resolution, more
+diverse generators), and evaluated for both raw accuracy and AUC across
+every transform in the problem statement's table. A second backbone
+option (configurable, higher-capacity) was also explored in collaboration
+with a teammate and cross-evaluated against this model using a shared
+evaluation harness — see `outputs/` for the resulting comparison tables.
+
+## Development Tools
+
+- Google Colab (GPU training)
+- VS Code (local development, notebook editing)
+- GitHub (version control, branch-per-person workflow)
+
+## Models / APIs
+
+- `SmallCNN` — custom lightweight CNN (6 conv layers, ~128 channel max,
+  BatchNorm + Dropout), trained from scratch, well under the 2B parameter
+  cap. Operates on 32x32 inputs.
+- A second, configurable-backbone model (teammate's implementation) was
+  cross-evaluated against this one using a shared evaluation harness —
+  see `cross_eval/` and `outputs/robustness_table_via_her_harness.csv`.
+
+## Libraries & Frameworks
+
+- PyTorch / torchvision — model, training loop, data loading
+- `datasets` (Hugging Face) — streaming partial downloads of SID_Set
+- `kagglehub` — CIFAKE download
+- scikit-learn — AUC / precision / recall / F1 metrics
+- Pillow, NumPy — image transforms and augmentation
+- matplotlib — robustness summary charts
+
+## Datasets & Assets
+
+- **CIFAKE** (Kaggle) — 100,000 train / 20,000 test images, 32x32,
+  balanced REAL/FAKE.
+- **SID_Set** (Hugging Face, `saberzl/SID_Set`) — streamed subset (~10,000
+  training images, ~2,000 held-out test images), full resolution,
+  3-way labeled (real / full-synthetic / tampered — tampered images are
+  treated as FAKE for this task). Downloaded via `datasets.load_dataset`
+  in streaming mode to avoid pulling the full 140GB dataset.
+- **WildFake validation subset** (COCO val2017 + DALL·E Advanced, per the
+  problem statement) — reserved as a reference benchmark only, **not**
+  used in training.
 
 ## Setup & Installation
 
@@ -21,47 +71,124 @@ pip install -r requirements.txt
 
 ## Data
 
-Datasets are not committed to this repo (`data/` is gitignored). Download:
-- SID_Set: https://huggingface.co/datasets/saberzl/SID_Set
-- CIFAKE: https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images
-- WildFake: https://modelscope.cn/datasets/hy2628982280/WildFake/summary
+Datasets are not committed to this repo (`data/` is gitignored — each
+teammate downloads their own local copy).
 
-<!-- Person A: add exact folder layout expected under data/ once dataset.py is finalized -->
+**CIFAKE:**
+```bash
+# via kagglehub, or download manually from:
+# https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images
+```
+Expected layout: `data/cifake/train/{REAL,FAKE}`, `data/cifake/test/{REAL,FAKE}`
+
+**SID_Set subset** (streamed, no full download):
+```python
+from datasets import load_dataset
+ds = load_dataset("saberzl/SID_Set", split="train", streaming=True)
+# see notebooks/ for the full download + REAL/FAKE folder-saving script
+```
+Expected layout: `data/sid_subset/{REAL,FAKE}` (training),
+`data/sid_test_holdout/{REAL,FAKE}` (held-out, non-overlapping test set)
 
 ## Reproducing Results
 
-<!-- Person B/C, Day 2-3: fill in the exact commands, e.g.
-python -m src.train --config configs/baseline.yaml
-python -m src.build_test_transforms --input data/test_clean --output data/test_transformed
-python -m src.evaluate --checkpoint checkpoints/model.pt --test_dir data/test_transformed
--->
-
-## Running Inference
-
+**1. Train** (supports one or more merged datasets):
 ```bash
-python -m src.infer --input_dir <path_to_images> --output_json outputs/preds.json --checkpoint checkpoints/model.pt
+python -m src.train --data_dir data/cifake/train data/sid_subset --epochs 10 --out checkpoints/cnn_merged.pt
+```
+Saves the checkpoint from the best validation-accuracy epoch, not simply
+the final epoch. Training uses on-the-fly augmentation (JPEG, blur,
+resize, noise, color jitter, crop) on the training split only; validation
+stays clean.
+
+**2. Run inference** (image directory → JSON):
+```bash
+python -m src.infer --input_dir data/cifake/test data/sid_test_holdout --output_json outputs/preds.json --checkpoint checkpoints/cnn_merged.pt
 ```
 
-Outputs a JSON file with `image_path` and `pred` (confidence the image is
-AI-generated, 0-1) for every image in the input directory.
+**3. Robustness evaluation** (accuracy per transform):
+```bash
+python -m src.eval_robustness --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout --out_csv outputs/robustness_table_merged.csv
+```
+
+**4. AUC evaluation** (threshold-independent ranking quality per transform):
+```bash
+python -m src.eval_auc --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout --out_csv outputs/auc_table.csv
+```
+
+**5. Robustness summary table + chart:**
+```bash
+python -m src.make_robustness_summary --csv outputs/robustness_table_merged.csv:CIFAKE+SID_Set
+```
+
+**6. Error analysis** (worst false positives / false negatives, saved with example images):
+```bash
+python -m src.error_analysis --test_dir data/cifake/test data/sid_test_holdout --checkpoint checkpoints/cnn_merged.pt
+```
+
+**7. Cross-evaluation against teammate's harness** (see `cross_eval/`):
+```bash
+cd cross_eval
+python build_test_transforms.py --test_dir ../data/cifake/test --out_dir ../data/test_transformed
+python evaluate.py --checkpoint ../checkpoints/cnn_merged.pt --backbone small_cnn --data_dir ../data/cifake --transformed_dir ../data/test_transformed --out ../outputs/robustness_table_via_her_harness.csv
+```
 
 ## Results
 
-<!-- Person C, Day 2-3: paste/link the robustness table (clean vs each
-transform/severity) and 2-3 representative error analysis examples here,
-or link to outputs/robustness_table.csv -->
+See `outputs/`:
+- `robustness_table_merged.csv` / `robustness_summary.md` / `robustness_chart.png` — accuracy per transform
+- `auc_table.csv` — AUC per transform
+- `error_analysis_note.md` + `error_analysis_examples/` — representative false positives/negatives
+- `robustness_table_via_her_harness.csv` — cross-evaluation against a second backbone
+
+Headline finding: clean AUC ~0.98, degrading to ~0.93-0.94 under the
+heaviest blur (sigma=2.0) and downsampling (0.25x) conditions — the
+smallest degradation of any transform pair, but still the model's two
+weakest points. Accuracy degrades more sharply than AUC under these same
+conditions, suggesting a threshold-calibration gap rather than a pure
+loss of discriminative signal (see Limitations below).
 
 ## Limitations & Future Work
 
-<!-- Person D, Day 3: pull from Person C's error analysis + team discussion -->
+- **Fixed 0.5 decision threshold.** AUC holds up better than accuracy
+  under heavy blur/resize, suggesting the model still ranks fakes above
+  reals reasonably well even where hard classification suffers — a
+  transform-aware or calibrated threshold could likely recover some of
+  this gap without retraining.
+- **Residual failures concentrate in a small, consistent subset of hard
+  examples** (same handful of images fail across multiple transforms)
+  rather than being uniformly distributed — worth further investigation
+  into what makes these specific images harder (see
+  `error_analysis_note.md`).
+- **Possible dataset-specific shortcut learning.** CIFAKE is a
+  known-easy benchmark; strong performance there doesn't guarantee
+  generalization to generator families never seen in training. This
+  wasn't tested against fully out-of-distribution generators due to time
+  constraints — a natural next step.
+- **32x32 input resolution** discards fine detail that a higher-resolution
+  backbone might use more effectively, particularly on SID_Set's
+  full-resolution images. A pretrained backbone (CLIP/DINOv2) at higher
+  resolution was explored as an alternative approach by a teammate; see
+  cross-evaluation results for a head-to-head comparison.
+- **WildFake was not used for training**, per the problem statement's
+  constraints, and was only partially explored for validation due to its
+  large (~150GB+) size relative to available time and storage.
+- **Given more time:** explainability (Grad-CAM) to confirm whether the
+  model relies on semantically meaningful cues vs. low-level artifacts;
+  ensembling the two backbone approaches, since they may fail on
+  different examples; broader hyperparameter search (dropout, weight
+  decay, augmentation severity weighting) beyond the manual tuning done
+  here.
 
 ## Team Contributions
 
 <!-- Name — role — key contributions -->
 
-## Development Tools & Stack
+## Reproducibility Notes
 
-- Development: <!-- e.g. VS Code, Colab -->
-- Models/APIs: <!-- e.g. CLIP ViT-B/16 backbone -->
-- Libraries: PyTorch, torchvision, open-clip-torch, opencv-python, scikit-learn, grad-cam
-- Datasets: SID_Set, CIFAKE, WildFake (subset)
+- Checkpoints and raw datasets are gitignored; only small result files
+  (`outputs/`) are committed.
+- Random seeds are fixed for the train/val split (`seed=42` in
+  `get_dataloaders`) but not for augmentation itself, so exact training
+  curves may vary slightly run-to-run; validation accuracy trends should
+  be consistent.
