@@ -1,0 +1,11 @@
+transform,auc,n_images
+clean,0.9863,22000
+jpeg_q30,0.9714,22000
+jpeg_q70,0.9863,22000
+blur_sigma1.0,0.9585,22000
+blur_sigma2.0,0.9363,22000
+resize_0.5x,0.9605,22000
+resize_0.25x,0.9393,22000
+noise_sigma0.05,0.9810,22000
+color_jitter,0.9819,22000
+center_crop_80,0.9650,22000
