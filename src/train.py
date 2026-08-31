@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, Subset, ConcatDataset
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from src.model import SmallCNN, _TRANSFORM, pick_device
+from src.model import SmallCNN, _TRANSFORM
 from src.augment_transform import RandomRobustnessAugment
 
 _AUGMENTED_TRANSFORM = transforms.Compose([
@@ -78,7 +78,7 @@ def evaluate(model, loader, class_to_idx, device):
 
 
 def train(data_dirs: list[str], epochs: int, batch_size: int, lr: float, weight_decay: float, out_path: str):
-    device = pick_device()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     train_loader, val_loader, class_to_idx = get_dataloaders(data_dirs, batch_size)

@@ -6,10 +6,6 @@ pillow
 tqdm
 datasets
 
-# Dataset download
-requests          # streaming HTTP for the WildFake subset fetch
-stream-unzip      # decode WildFake zips on the fly without a full download
-
 # Model backbones (Person B)
 open-clip-torch
 timm

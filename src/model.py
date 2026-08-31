@@ -39,16 +39,6 @@ class SmallCNN(nn.Module):
         x = self.dropout(x)
         return self.classifier(x)
 
-def pick_device():
-    """Best available torch device: CUDA > Apple Silicon MPS > CPU."""
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    mps = getattr(torch.backends, "mps", None)
-    if mps is not None and mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
 IMAGE_SIZE = 32
 _TRANSFORM = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
@@ -58,7 +48,7 @@ _TRANSFORM = transforms.Compose([
 
 class RealModel:
     def __init__(self, checkpoint_path: str):
-        self.device = pick_device()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.net = SmallCNN().to(self.device)
         state_dict = torch.load(checkpoint_path, map_location=self.device)
         self.net.load_state_dict(state_dict)

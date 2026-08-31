@@ -15,14 +15,9 @@ compression, blurring, downsampling, and cropping rather than relying on
 brittle high-frequency artifacts that vanish under light processing.
 
 The model is trained on a combination of CIFAKE (32x32 real/synthetic
-image pairs), a streamed subset of SID_Set (higher-resolution, more
-diverse generators), and a streamed subset of WildFake (many generator
-families: ADM, DDIM, DDPM, Imagen, VQDM, Midjourney, personalised SD,
-GANs, plus GAN/diffusion real-image sources), and evaluated for both raw
-accuracy and AUC across every transform in the problem statement's table.
-The WildFake subset deliberately **excludes** the two archives that make
-up the organisers' demo benchmark (COCO val2017 and "DALL-E Advanced") so
-there is no train/validation overlap. A second backbone
+image pairs) and a streamed subset of SID_Set (higher-resolution, more
+diverse generators), and evaluated for both raw accuracy and AUC across
+every transform in the problem statement's table. A second backbone
 option (configurable, higher-capacity) was also explored in collaboration
 with a teammate and cross-evaluated against this model using a shared
 evaluation harness — see `outputs/` for the resulting comparison tables.
@@ -46,8 +41,6 @@ evaluation harness — see `outputs/` for the resulting comparison tables.
 
 - PyTorch / torchvision — model, training loop, data loading
 - `datasets` (Hugging Face) — streaming partial downloads of SID_Set
-- `requests` + `stream-unzip` — streaming a bounded subset of WildFake
-  from ModelScope without downloading the full ~1.3 TB
 - `kagglehub` — CIFAKE download
 - scikit-learn — AUC / precision / recall / F1 metrics
 - Pillow, NumPy — image transforms and augmentation
@@ -62,21 +55,9 @@ evaluation harness — see `outputs/` for the resulting comparison tables.
   3-way labeled (real / full-synthetic / tampered — tampered images are
   treated as FAKE for this task). Downloaded via `datasets.load_dataset`
   in streaming mode to avoid pulling the full 140GB dataset.
-- **WildFake** (ModelScope, `hy2628982280/WildFake`) — streamed subset
-  (~9k training images, ~2k held-out test images) drawn from many
-  generator families and real-image sources. WildFake ships as a handful
-  of 6–50 GB zip archives; `src/download_wildfake.py` opens an HTTP
-  stream per archive, decodes it on the fly with `stream-unzip`, and
-  stops after the first N images (a few hundred MB per archive instead of
-  tens of GB). The `Images/Real/coco.zip` and
-  `Images/Diffusion_based/DALLE.zip` archives are hard-blocked in that
-  script because they contain the organisers' demo benchmark
-  (**COCO val2017** + **DALL·E Advanced**) — that data is never
-  downloaded and never seen in training.
-- **WildFake demo/validation subset** (COCO val2017 + DALL·E Advanced,
-  4998 + 8843 images, per the problem statement) — reference benchmark
-  only, obtained separately from the organisers, **not** used in
-  training.
+- **WildFake validation subset** (COCO val2017 + DALL·E Advanced, per the
+  problem statement) — reserved as a reference benchmark only, **not**
+  used in training.
 
 ## Setup & Installation
 
@@ -101,37 +82,19 @@ teammate downloads their own local copy).
 Expected layout: `data/cifake/train/{REAL,FAKE}`, `data/cifake/test/{REAL,FAKE}`
 
 **SID_Set subset** (streamed, no full download):
-```bash
-python -m src.download_sid
-# tune volume:  --n_train 4000 --n_test 1000
+```python
+from datasets import load_dataset
+ds = load_dataset("saberzl/SID_Set", split="train", streaming=True)
+# see notebooks/ for the full download + REAL/FAKE folder-saving script
 ```
-Streams `saberzl/SID_Set` and writes the first `--n_train` examples as the
-training subset and the next `--n_test` as a non-overlapping holdout
-(SID_Set labels: 0 = real → REAL; 1 = fully synthetic, 2 = tampered →
-FAKE). Note: SID_Set's streaming loader fetches a full shard before it
-yields the first example, so the first output line can take a few minutes.
 Expected layout: `data/sid_subset/{REAL,FAKE}` (training),
 `data/sid_test_holdout/{REAL,FAKE}` (held-out, non-overlapping test set)
-
-**WildFake subset** (streamed from ModelScope, no full download):
-```bash
-python -m src.download_wildfake
-# tune volume:  --fake_per_source 1500 --real_per_source 1500
-# single sources: --only afhq ddim gan
-```
-Streams each selected WildFake archive over HTTP, unzips it on the fly,
-and stops after the first N images per source. `Images/Real/coco.zip` and
-`Images/Diffusion_based/DALLE.zip` are hard-blocked (reserved demo
-benchmark) and never fetched. Expected layout:
-`data/wildfake_subset/{REAL,FAKE}` (training),
-`data/wildfake_test_holdout/{REAL,FAKE}` (held-out, non-overlapping —
-drawn from the same stream, strictly after the training slice).
 
 ## Reproducing Results
 
 **1. Train** (supports one or more merged datasets):
 ```bash
-python -m src.train --data_dir data/cifake/train data/sid_subset data/wildfake_subset --epochs 10 --out checkpoints/cnn_merged.pt
+python -m src.train --data_dir data/cifake/train data/sid_subset --epochs 10 --out checkpoints/cnn_merged.pt
 ```
 Saves the checkpoint from the best validation-accuracy epoch, not simply
 the final epoch. Training uses on-the-fly augmentation (JPEG, blur,
@@ -140,17 +103,17 @@ stays clean.
 
 **2. Run inference** (image directory → JSON):
 ```bash
-python -m src.infer --input_dir data/cifake/test data/sid_test_holdout data/wildfake_test_holdout --output_json outputs/preds.json --checkpoint checkpoints/cnn_merged.pt
+python -m src.infer --input_dir data/cifake/test data/sid_test_holdout --output_json outputs/preds.json --checkpoint checkpoints/cnn_merged.pt
 ```
 
 **3. Robustness evaluation** (accuracy per transform):
 ```bash
-python -m src.eval_robustness --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout data/wildfake_test_holdout --out_csv outputs/robustness_table_merged.csv
+python -m src.eval_robustness --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout --out_csv outputs/robustness_table_merged.csv
 ```
 
 **4. AUC evaluation** (threshold-independent ranking quality per transform):
 ```bash
-python -m src.eval_auc --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout data/wildfake_test_holdout --out_csv outputs/auc_table.csv
+python -m src.eval_auc --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout --out_csv outputs/auc_table.csv
 ```
 
 **5. Robustness summary table + chart:**
@@ -207,14 +170,9 @@ loss of discriminative signal (see Limitations below).
   full-resolution images. A pretrained backbone (CLIP/DINOv2) at higher
   resolution was explored as an alternative approach by a teammate; see
   cross-evaluation results for a head-to-head comparison.
-- **WildFake is used for training via a streamed subset only.** The full
-  dataset is ~1.3 TB, so `src/download_wildfake.py` pulls just the first
-  N images per generator archive. This biases the WildFake contribution
-  toward whatever ordering each archive happens to use (often a single
-  sub-shard), so the subset is diverse across generator *families* but
-  not necessarily representative *within* a family. The reserved demo
-  benchmark archives (COCO val2017, DALL·E Advanced) are excluded from
-  the download entirely.
+- **WildFake was not used for training**, per the problem statement's
+  constraints, and was only partially explored for validation due to its
+  large (~150GB+) size relative to available time and storage.
 - **Given more time:** explainability (Grad-CAM) to confirm whether the
   model relies on semantically meaningful cues vs. low-level artifacts;
   ensembling the two backbone approaches, since they may fail on
@@ -234,7 +192,3 @@ loss of discriminative signal (see Limitations below).
   `get_dataloaders`) but not for augmentation itself, so exact training
   curves may vary slightly run-to-run; validation accuracy trends should
   be consistent.
-- Training and inference auto-select the compute device via
-  `pick_device()` in `src/model.py`: CUDA if present, then Apple Silicon
-  MPS, then CPU. This is a no-op on Colab (CUDA) but lets the pipeline run
-  on the GPU of an M-series Mac locally.
