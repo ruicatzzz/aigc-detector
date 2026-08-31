@@ -76,4 +76,5 @@ def run_quick_test(test_dir, checkpoint_path, n_per_class=5):
                     print(f"  {name:18s} pred={pred:.4f}")
 
 
-run_quick_test("data/cifake/test", "checkpoints/cnn_cifake.pt", n_per_class=20)
+if __name__ == "__main__":
+    run_quick_test("data/cifake/test", "checkpoints/cnn_merged.pt", n_per_class=20)

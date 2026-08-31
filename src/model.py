@@ -56,16 +56,57 @@ _TRANSFORM = transforms.Compose([
     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
 
+# ImageNet-pretrained timm backbones want a bigger input and ImageNet stats.
+EFFICIENTNET_IMAGE_SIZE = 224
+_TRANSFORM_EFFICIENTNET = transforms.Compose([
+    transforms.Resize((EFFICIENTNET_IMAGE_SIZE, EFFICIENTNET_IMAGE_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+BACKBONES = ("small_cnn", "efficientnet_b0")
+
+
+def get_transform(backbone: str = "small_cnn"):
+    """Preprocessing pipeline matching the given backbone."""
+    return _TRANSFORM_EFFICIENTNET if backbone == "efficientnet_b0" else _TRANSFORM
+
+
+def build_model(backbone: str = "small_cnn", pretrained: bool = True) -> nn.Module:
+    """Untrained backbone with a single-logit head (pairs with BCEWithLogitsLoss).
+
+    `pretrained` only matters for timm backbones and only at training time; for
+    inference we load our own weights, so it is passed as False there.
+    """
+    if backbone == "small_cnn":
+        return SmallCNN()
+    if backbone == "efficientnet_b0":
+        try:
+            import timm
+        except ImportError as exc:
+            raise SystemExit("efficientnet_b0 needs timm  ->  pip install timm") from exc
+        return timm.create_model("efficientnet_b0", pretrained=pretrained, num_classes=1)
+    raise ValueError(f"unknown backbone {backbone!r}; choose from {BACKBONES}")
+
+
 class RealModel:
     def __init__(self, checkpoint_path: str):
         self.device = pick_device()
-        self.net = SmallCNN().to(self.device)
-        state_dict = torch.load(checkpoint_path, map_location=self.device)
+        obj = torch.load(checkpoint_path, map_location=self.device)
+        # New checkpoints are {"backbone", "state_dict"}; legacy ones are a bare
+        # SmallCNN state_dict.
+        if isinstance(obj, dict) and "backbone" in obj and "state_dict" in obj:
+            self.backbone, state_dict = obj["backbone"], obj["state_dict"]
+        else:
+            self.backbone, state_dict = "small_cnn", obj
+        self.transform = get_transform(self.backbone)
+        self.net = build_model(self.backbone, pretrained=False).to(self.device)
         self.net.load_state_dict(state_dict)
         self.net.eval()
+
     @torch.no_grad()
     def predict(self, image: Image.Image) -> float:
-        x = _TRANSFORM(image).unsqueeze(0).to(self.device)
+        x = self.transform(image).unsqueeze(0).to(self.device)
         logit = self.net(x)
         prob = torch.sigmoid(logit).item()
         return round(prob, 4)
