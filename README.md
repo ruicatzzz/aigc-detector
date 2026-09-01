@@ -38,9 +38,14 @@ evaluation harness — see `outputs/` for the resulting comparison tables.
 - `SmallCNN` — custom lightweight CNN (6 conv layers, ~128 channel max,
   BatchNorm + Dropout), trained from scratch, well under the 2B parameter
   cap. Operates on 32x32 inputs.
-- A second, configurable-backbone model (teammate's implementation) was
-  cross-evaluated against this one using a shared evaluation harness —
-  see `cross_eval/` and `outputs/robustness_table_via_her_harness.csv`.
+- `efficientnet_b0` — optional ImageNet-pretrained backbone (via `timm`),
+  fine-tuned as a binary classifier at 224x224.
+- `freq_cnn` — the `SmallCNN` architecture applied to a 3-channel
+  log-magnitude Fourier spectrum of the image (catches up-sampling
+  artifacts an RGB model misses).
+- Backbone is selected with `--backbone {small_cnn,efficientnet_b0,freq_cnn}`;
+  `src/ensemble.py` averages several checkpoints (e.g. a spatial model +
+  `freq_cnn`).
 
 ## Libraries & Frameworks
 
@@ -129,54 +134,68 @@ drawn from the same stream, strictly after the training slice).
 
 ## Reproducing Results
 
-**1. Train** (supports one or more merged datasets):
-```bash
-python -m src.train --data_dir data/cifake/train data/sid_subset data/wildfake_subset --epochs 10 --out checkpoints/cnn_merged.pt
-```
-Saves the checkpoint from the best validation-accuracy epoch, not simply
-the final epoch. Training uses on-the-fly augmentation (JPEG, blur,
-resize, noise, color jitter, crop) on the training split only; validation
-stays clean.
+Dataset dirs after downloading (see **Data** above): `data/CIFAKE/train`,
+`data/CIFAKE/test`, `data/sid_subset`, `data/sid_test_holdout`,
+`data/wildfake_subset`, `data/wildfake_test_holdout`. The demo/validation
+benchmark (`data/demo_benchmark`) is downloaded separately with
+`python -m src.download_demo_benchmark` and is used for evaluation only.
 
-**2. Run inference** (image directory → JSON):
+**1. Train.** One or more `--data_dir` are merged. `--backbone` picks the
+architecture; `--cap_per_source` / `--balance_classes` keep one dataset
+from dominating; `--no_augment` gives the non-augmented A/B baseline.
 ```bash
-python -m src.infer --input_dir data/cifake/test data/sid_test_holdout data/wildfake_test_holdout --output_json outputs/preds.json --checkpoint checkpoints/cnn_merged.pt
+python -m src.train --data_dir data/CIFAKE/train data/sid_subset data/wildfake_subset \
+  --backbone freq_cnn --cap_per_source 15000 --balance_classes --epochs 10 --out checkpoints/freq_balanced.pt
 ```
+Saves the checkpoint from the best validation-accuracy epoch. Train-time
+augmentation (stacked JPEG / blur / resize / noise / colour-jitter / crop
+/ rotation / flip) is applied to the training split only; validation stays
+clean.
 
-**3. Robustness evaluation** (accuracy per transform):
+**2. Run inference** (image directory → JSON of `{image_path, pred}`):
 ```bash
-python -m src.eval_robustness --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout data/wildfake_test_holdout --out_csv outputs/robustness_table_merged.csv
-```
-
-**4. AUC evaluation** (threshold-independent ranking quality per transform):
-```bash
-python -m src.eval_auc --checkpoint checkpoints/cnn_merged.pt --test_dir data/cifake/test data/sid_test_holdout data/wildfake_test_holdout --out_csv outputs/auc_table.csv
-```
-
-**5. Robustness summary table + chart:**
-```bash
-python -m src.make_robustness_summary --csv outputs/robustness_table_merged.csv:CIFAKE+SID_Set
+python -m src.infer --checkpoint checkpoints/freq_balanced.pt \
+  --input_dir data/demo_benchmark --output_json outputs/demo_preds.json
 ```
 
-**6. Error analysis** (worst false positives / false negatives, saved with example images):
+**3. Robustness evaluation** — accuracy and AUC across the full transform grid:
 ```bash
-python -m src.error_analysis --test_dir data/cifake/test data/sid_test_holdout --checkpoint checkpoints/cnn_merged.pt
+python -m src.eval_robustness --checkpoint checkpoints/freq_balanced.pt --test_dir data/demo_benchmark --out_csv outputs/demo_robustness.csv
+python -m src.eval_auc        --checkpoint checkpoints/freq_balanced.pt --test_dir data/demo_benchmark --out_csv outputs/demo_auc.csv
 ```
 
-**7. Cross-evaluation against teammate's harness** (see `cross_eval/`):
+**4. Summary table + chart** (clean vs mean/worst transformed):
 ```bash
-cd cross_eval
-python build_test_transforms.py --test_dir ../data/cifake/test --out_dir ../data/test_transformed
-python evaluate.py --checkpoint ../checkpoints/cnn_merged.pt --backbone small_cnn --data_dir ../data/cifake --transformed_dir ../data/test_transformed --out ../outputs/robustness_table_via_her_harness.csv
+python -m src.robustness_summary \
+  --csv outputs/demo_robustness.csv:Accuracy outputs/demo_auc.csv:AUC \
+  --out_md outputs/demo_robustness_summary.md --out_png outputs/demo_robustness_chart.png
+```
+
+**5. Calibration** (temperature + fixed-FPR operating points):
+```bash
+python -m src.calibrate --checkpoint checkpoints/freq_balanced.pt --val_dir data/sid_test_holdout data/wildfake_test_holdout
+```
+
+**6. Cross-dataset generalisation probe** (per-dataset AUC, shortcut spread):
+```bash
+python -m src.eval_crossdataset --checkpoint checkpoints/freq_balanced.pt \
+  --dataset SID=data/sid_test_holdout WildFake=data/wildfake_test_holdout DemoBenchmark=data/demo_benchmark
+```
+
+**7. Error analysis** (worst FP/FN saved as images + written note):
+```bash
+python -m src.error_analysis --checkpoint checkpoints/freq_balanced.pt --test_dir data/demo_benchmark
 ```
 
 ## Results
 
 See `outputs/`:
-- `robustness_table_merged.csv` / `robustness_summary.md` / `robustness_chart.png` — accuracy per transform
-- `auc_table.csv` — AUC per transform
-- `error_analysis_note.md` + `error_analysis_examples/` — representative false positives/negatives
-- `robustness_table_via_her_harness.csv` — cross-evaluation against a second backbone
+- `small_demo_robustness.csv` / `small_demo_auc.csv` — per-transform accuracy / AUC on the demo benchmark
+- `demo_robustness_summary.md` / `demo_robustness_chart.png` — combined table + chart, with the clean / mean-transformed / worst-transformed summary
+- `rob_baseline.csv` vs `rob_augmented.csv` — augmented vs non-augmented A/B
+- `calibration_note.md` — temperature + operating points at 1% / 5% / 10% FPR
+- `crossdataset.csv` — per-dataset AUC (generalisation gap)
+- `error_analysis_note.md` + `error_analysis_examples/` — representative false positives / negatives
 
 Headline finding: clean AUC ~0.98, degrading to ~0.93-0.94 under the
 heaviest blur (sigma=2.0) and downsampling (0.25x) conditions — the

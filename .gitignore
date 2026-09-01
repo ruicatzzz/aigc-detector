@@ -1,2 +1,14 @@
 data/
 checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# macOS
+.DS_Store
+
+# Local dataset archives (downloaded, never committed)
+*.zip
