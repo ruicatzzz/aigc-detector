@@ -29,7 +29,8 @@ def find_images(input_dir: Path):
     return sorted(p for p in input_dir.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
 
 
-def run_inference(input_dirs: list[str], output_json: str, checkpoint: str | None = None):
+def run_inference(input_dirs: list[str], output_json: str, checkpoint: str | None = None,
+                  calibration: str | None = None):
     output_json = Path(output_json)
     output_json.parent.mkdir(parents=True, exist_ok=True)
 
@@ -40,7 +41,7 @@ def run_inference(input_dirs: list[str], output_json: str, checkpoint: str | Non
     if not image_paths:
         raise FileNotFoundError(f"No images found under {input_dirs}")
 
-    model = load_model(checkpoint)
+    model = load_model(checkpoint, calibration=calibration)
     results = []
     for path in tqdm(image_paths, desc="Running inference"):
         try:
@@ -61,9 +62,11 @@ def parse_args():
     parser.add_argument("--input_dir", nargs="+", required=True, help="One or more directories of images to score")
     parser.add_argument("--output_json", required=True, help="Path to write predictions JSON")
     parser.add_argument("--checkpoint", default=None, help="Path to trained model checkpoint")
+    parser.add_argument("--calibration", default=None,
+                        help="src/calibrate.py JSON (applies temperature scaling to the score)")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_inference(args.input_dir, args.output_json, args.checkpoint)
+    run_inference(args.input_dir, args.output_json, args.checkpoint, args.calibration)

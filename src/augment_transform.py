@@ -40,6 +40,21 @@ def _center_crop_80(img):
     left, top = (w - new_w) // 2, (h - new_h) // 2
     return img.crop((left, top, left + new_w, top + new_h)).resize((w, h))
 
+def _rotate(img):
+    # small rotations kill orientation/semantic shortcuts (SAFE, KDD 2025)
+    return img.rotate(random.uniform(-12, 12), resample=Image.BILINEAR, fillcolor=(0, 0, 0))
+
+def _hflip(img):
+    return img.transpose(Image.FLIP_LEFT_RIGHT)
+
+def _random_crop_80(img):
+    # like center_crop_80 but off-centre — a random 80% window
+    w, h = img.size
+    new_w, new_h = int(w * 0.8), int(h * 0.8)
+    left = random.randint(0, w - new_w)
+    top = random.randint(0, h - new_h)
+    return img.crop((left, top, left + new_w, top + new_h)).resize((w, h))
+
 BLUR_SIGMAS = [0.5, 1.0, 2.0]
 BLUR_WEIGHTS = [0.2, 0.3, 0.5]
 
@@ -57,17 +72,28 @@ AUGMENTATIONS = [
     lambda img: _noise(img, random.choice(NOISE_SIGMAS)),
     lambda img: _color_jitter(img),
     lambda img: _center_crop_80(img),
+    lambda img: _random_crop_80(img),
+    lambda img: _rotate(img),
+    lambda img: _hflip(img),
 ]
 
 
 class RandomRobustnessAugment:
-    """Applies one random transform (or none) with probability p per call."""
+    """Applies 0..max_ops random transforms per call.
 
-    def __init__(self, p=0.7):
+    Real redistribution stacks operations (compress -> resize -> re-compress),
+    so with probability `p` we apply a chain of 1..max_ops transforms rather
+    than just one. `max_ops=1` reproduces the original single-transform
+    behaviour.
+    """
+
+    def __init__(self, p=0.7, max_ops=2):
         self.p = p
+        self.max_ops = max_ops
 
     def __call__(self, img):
         if random.random() < self.p:
-            fn = random.choice(AUGMENTATIONS)
-            img = fn(img)
+            k = random.randint(1, self.max_ops)
+            for fn in random.sample(AUGMENTATIONS, k):
+                img = fn(img)
         return img

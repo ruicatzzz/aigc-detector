@@ -39,15 +39,23 @@ def center_crop_80(img):
     return img.crop((left, top, left + new_w, top + new_h))
 
 
+# Full severity grid from the problem statement's transform table:
+#   JPEG q = 90/70/50/30 | blur sigma = 0.5/1.0/2.0 | resize 0.5x/0.25x
+#   noise sigma = 0.02/0.05/0.10 | color jitter +-20% | center crop 80%
 TRANSFORMS = {
     "clean":            lambda img: img,
-    "jpeg_q30":         lambda img: jpeg_compress(img, 30),
+    "jpeg_q90":         lambda img: jpeg_compress(img, 90),
     "jpeg_q70":         lambda img: jpeg_compress(img, 70),
+    "jpeg_q50":         lambda img: jpeg_compress(img, 50),
+    "jpeg_q30":         lambda img: jpeg_compress(img, 30),
+    "blur_sigma0.5":    lambda img: gaussian_blur(img, 0.5),
     "blur_sigma1.0":    lambda img: gaussian_blur(img, 1.0),
     "blur_sigma2.0":    lambda img: gaussian_blur(img, 2.0),
     "resize_0.5x":      lambda img: resize_down_up(img, 0.5),
     "resize_0.25x":     lambda img: resize_down_up(img, 0.25),
+    "noise_sigma0.02":  lambda img: gaussian_noise(img, 0.02),
     "noise_sigma0.05":  lambda img: gaussian_noise(img, 0.05),
+    "noise_sigma0.10":  lambda img: gaussian_noise(img, 0.10),
     "color_jitter":     lambda img: color_jitter(img),
     "center_crop_80":   lambda img: center_crop_80(img),
 }
@@ -76,4 +84,5 @@ def run_quick_test(test_dir, checkpoint_path, n_per_class=5):
                     print(f"  {name:18s} pred={pred:.4f}")
 
 
-run_quick_test("data/cifake/test", "checkpoints/cnn_cifake.pt", n_per_class=20)
+if __name__ == "__main__":
+    run_quick_test("data/cifake/test", "checkpoints/cnn_merged.pt", n_per_class=20)
