@@ -8,6 +8,7 @@
 
 ## Worst false positives (REAL, highest P(AI))
 
+
 | rank | dataset | P(AI) | file |
 |---|---|---|---|
 | 0 | demo_benchmark | 0.530 | `coco__img153171.jpg` |

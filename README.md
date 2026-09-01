@@ -243,7 +243,15 @@ loss of discriminative signal (see Limitations below).
 
 ## Team Contributions
 
-<!-- Name — role — key contributions -->
+- **Daphne** — Infrastructure and model training: dataset streaming/download
+  pipeline, `SmallCNN` architecture, training loop and augmentation,
+  compute setup.
+- **Emily, Vera** — Pretrained backbone testing: EfficientNet-B0 / higher-
+  resolution backbone experiments and cross-evaluation.
+- **Anni** — Fine-tuning, calibration and error analysis: robustness
+  evaluation harness, temperature calibration and fixed-FPR operating
+  points, cross-dataset probe, error-analysis note, `freq_cnn` +
+  ensemble, demo benchmark.
 
 ## Reproducibility Notes
 
