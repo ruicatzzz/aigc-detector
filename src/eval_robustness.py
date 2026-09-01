@@ -21,8 +21,8 @@ from src.model import load_model
 from src.robustness_test import TRANSFORMS
 
 
-def evaluate_accuracy(test_dirs, checkpoint_path, out_csv, threshold: float = 0.5):
-    model = load_model(checkpoint_path)
+def evaluate_accuracy(test_dirs, checkpoint_path, out_csv, threshold: float = 0.5, calibration=None):
+    model = load_model(checkpoint_path, calibration=calibration)
     results = {name: {"correct": 0, "total": 0} for name in TRANSFORMS}
 
     for test_dir in test_dirs:
@@ -64,9 +64,11 @@ def parse_args():
     parser.add_argument("--out_csv", default="outputs/robustness_table.csv")
     parser.add_argument("--threshold", type=float, default=0.5,
                          help="decision threshold on P(FAKE)")
+    parser.add_argument("--calibration", default=None,
+                         help="src/calibrate.py JSON (temperature scaling)")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    evaluate_accuracy(args.test_dir, args.checkpoint, args.out_csv, args.threshold)
+    evaluate_accuracy(args.test_dir, args.checkpoint, args.out_csv, args.threshold, args.calibration)

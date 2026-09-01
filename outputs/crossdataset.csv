@@ -1,0 +1,2 @@
+dataset,n_images,clean_accuracy,clean_auc,mean_transformed_auc
+DemoBenchmark,1600,0.9456,0.9970,0.9533

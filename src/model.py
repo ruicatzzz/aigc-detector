@@ -64,12 +64,73 @@ _TRANSFORM_EFFICIENTNET = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-BACKBONES = ("small_cnn", "efficientnet_b0")
+FREQ_IMAGE_SIZE = 64
+
+
+class FFTMagnitude:
+    """PIL RGB image -> per-channel log-magnitude Fourier spectrum, as a
+    3xNxN tensor in [-1, 1].
+
+    This is the input for the `freq_cnn` backbone: GAN/diffusion up-sampling
+    leaves periodic peaks in the spectrum that cameras don't produce, and a
+    spectrum-domain model catches artifacts an RGB model misses (brief slide 1).
+    Module-level class (not a lambda) so DataLoader workers can pickle it.
+    """
+
+    def __init__(self, size: int = FREQ_IMAGE_SIZE):
+        self.size = size
+
+    def __call__(self, img):
+        import numpy as np
+        arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+        chans = []
+        for c in range(3):
+            f = np.fft.fftshift(np.fft.fft2(arr[:, :, c]))
+            mag = np.log1p(np.abs(f))
+            mag = (mag - mag.min()) / (mag.max() - mag.min() + 1e-8)
+            chans.append(mag)
+        t = torch.from_numpy(np.stack(chans, axis=0))  # 3xHxW, [0,1]
+        t = torch.nn.functional.interpolate(
+            t.unsqueeze(0), size=(self.size, self.size), mode="bilinear", align_corners=False
+        ).squeeze(0)
+        return (t - 0.5) / 0.5
+
+
+_TRANSFORM_FREQ = FFTMagnitude(FREQ_IMAGE_SIZE)
+
+BACKBONES = ("small_cnn", "efficientnet_b0", "freq_cnn")
 
 
 def get_transform(backbone: str = "small_cnn"):
-    """Preprocessing pipeline matching the given backbone."""
-    return _TRANSFORM_EFFICIENTNET if backbone == "efficientnet_b0" else _TRANSFORM
+    """Deterministic preprocessing for val / inference."""
+    if backbone == "efficientnet_b0":
+        return _TRANSFORM_EFFICIENTNET
+    if backbone == "freq_cnn":
+        return _TRANSFORM_FREQ
+    return _TRANSFORM
+
+
+def get_train_transform(backbone: str = "small_cnn"):
+    """Train-time preprocessing: crops instead of plain downsampling so
+    high-frequency generator artifacts survive (SAFE, KDD 2025), plus a flip.
+    The near-square crop ratio also blunts the aspect-ratio dataset shortcut.
+    (src/augment_transform.RandomRobustnessAugment is applied *before* this.)
+    """
+    if backbone == "efficientnet_b0":
+        return transforms.Compose([
+            transforms.RandomResizedCrop(EFFICIENTNET_IMAGE_SIZE, scale=(0.6, 1.0), ratio=(0.85, 1.18)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+    if backbone == "freq_cnn":
+        return transforms.Compose([transforms.RandomHorizontalFlip(), _TRANSFORM_FREQ])
+    return transforms.Compose([
+        transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.5, 1.0), ratio=(0.9, 1.1)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+    ])
 
 
 def build_model(backbone: str = "small_cnn", pretrained: bool = True) -> nn.Module:
@@ -78,8 +139,8 @@ def build_model(backbone: str = "small_cnn", pretrained: bool = True) -> nn.Modu
     `pretrained` only matters for timm backbones and only at training time; for
     inference we load our own weights, so it is passed as False there.
     """
-    if backbone == "small_cnn":
-        return SmallCNN()
+    if backbone in ("small_cnn", "freq_cnn"):
+        return SmallCNN()  # same architecture; freq_cnn just gets a spectrum as input
     if backbone == "efficientnet_b0":
         try:
             import timm
@@ -90,7 +151,7 @@ def build_model(backbone: str = "small_cnn", pretrained: bool = True) -> nn.Modu
 
 
 class RealModel:
-    def __init__(self, checkpoint_path: str):
+    def __init__(self, checkpoint_path: str, temperature: float = 1.0):
         self.device = pick_device()
         obj = torch.load(checkpoint_path, map_location=self.device)
         # New checkpoints are {"backbone", "state_dict"}; legacy ones are a bare
@@ -103,18 +164,36 @@ class RealModel:
         self.net = build_model(self.backbone, pretrained=False).to(self.device)
         self.net.load_state_dict(state_dict)
         self.net.eval()
+        # Temperature scaling: logit /= T before the sigmoid. T=1 is a no-op;
+        # T>1 softens over-confident scores. Fitted by src/calibrate.py.
+        self.temperature = temperature
+
+    @torch.no_grad()
+    def logit(self, image: Image.Image) -> float:
+        x = self.transform(image).unsqueeze(0).to(self.device)
+        return self.net(x).item()
 
     @torch.no_grad()
     def predict(self, image: Image.Image) -> float:
-        x = self.transform(image).unsqueeze(0).to(self.device)
-        logit = self.net(x)
-        prob = torch.sigmoid(logit).item()
+        prob = torch.sigmoid(torch.tensor(self.logit(image) / self.temperature)).item()
         return round(prob, 4)
 
-def load_model(checkpoint_path: str | None = None):
+
+def _temperature_from_calibration(calibration) -> float:
+    if calibration is None:
+        return 1.0
+    if isinstance(calibration, (int, float)):
+        return float(calibration)
+    import json
+    with open(calibration) as f:
+        return float(json.load(f).get("temperature", 1.0))
+
+
+def load_model(checkpoint_path: str | None = None, calibration=None):
+    """calibration: path to a src/calibrate.py JSON, a bare temperature float, or None."""
     if checkpoint_path is None:
         return DummyModel()
-    return RealModel(checkpoint_path)
+    return RealModel(checkpoint_path, temperature=_temperature_from_calibration(calibration))
 
 
 FRIEND_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)  # placeholder — CONFIRM

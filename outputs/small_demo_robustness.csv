@@ -1,0 +1,16 @@
+transform,accuracy,n_images
+clean,0.9456,1600
+jpeg_q90,0.9669,1600
+jpeg_q70,0.9556,1600
+jpeg_q50,0.9656,1600
+jpeg_q30,0.9712,1600
+blur_sigma0.5,0.9719,1600
+blur_sigma1.0,0.9656,1600
+blur_sigma2.0,0.9137,1600
+resize_0.5x,0.9694,1600
+resize_0.25x,0.9187,1600
+noise_sigma0.02,0.9669,1600
+noise_sigma0.05,0.9806,1600
+noise_sigma0.10,0.9556,1600
+color_jitter,0.8869,1600
+center_crop_80,0.4288,1600
